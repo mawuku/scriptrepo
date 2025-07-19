@@ -39,3 +39,19 @@ sudo ./install-cbci-controller.sh
  Add verbose and debug logging options
 
  Add option to install custom plugins after CI install
+
+## Usage
+
+Download the script:
+
+curl -O https://raw.githubusercontent.com/<your-username>/<repo-name>/main/install-cbci-controller.sh
+chmod +x install-cbci-controller.sh
+
+Set the CloudBees CI version to install (e.g., 2.479.3.1):
+
+export CBCI_CM_VERSION_ENV=2.479.3.1
+
+
+Run the script as root or with sudo:
+
+sudo ./install-cbci-controller.sh
