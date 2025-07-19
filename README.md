@@ -30,3 +30,12 @@ This Bash script automates the installation of a **CloudBees CI Controller** (or
 ```bash
 chmod +x install-cbci-controller.sh
 sudo ./install-cbci-controller.sh
+
+## 🛠 Planned Enhancements
+ Support for --role oc to install CloudBees Operations Center
+
+ Add support for dnf-based systems (e.g., Fedora)
+
+ Add verbose and debug logging options
+
+ Add option to install custom plugins after CI install
