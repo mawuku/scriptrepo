@@ -1,113 +1,101 @@
 #!/bin/bash
 
 # Author: Makafui Awuku
-# Date Created: 01/03/2024
-# Date Modified: 01/03/2024
-
-# Description
-# Install Cloudbees CI operaton center on Linux
+# Description: Install CloudBees CI Controller on RPM-based Linux systems
 
 show_help() {
     echo "Usage: $0 [options]"
     echo
     echo "Options:"
     echo "  -h, --help      Display this help message and exit."
-    echo
-    echo "Example:"
-    echo "  $0 -f input.txt -o output.txt -v"
-    echo
-    echo "Notes:"
-    echo "  - This script requires an input file to operate."
-    echo "  - Output file will be overwritten if it already exists."
-    echo "  - Verbose mode provides detailed logging."
 }
 
-installOC () {
-    # Set version of the operations center.
-    CBCI_OC_VERSION_SHORT=$(echo $CBCI_OC_VERSION | cut -c 1,3-5)
+parse_version_number() {
+    # Converts version like 2.479.3.1 to 24793 for numeric comparison
+    echo "$1" | awk -F '.' '{ printf "%d%02d%02d\n", $2, $3, $4 }'
+}
 
-    # Updating packages
-    echo "Updating Unix packages"
+install_java_by_version() {
+    version_numeric=$(parse_version_number "$CBCI_CM_VERSION")
+
+    if [ "$version_numeric" -lt 23321 ]; then
+        echo "Installing Java 8"
+        yum install java-1.8.0-openjdk-devel -y > /dev/null 2>&1
+    elif [ "$version_numeric" -lt 24791 ]; then
+        echo "Installing Java 11"
+        yum install java-11-openjdk -y > /dev/null 2>&1
+    elif [ "$version_numeric" -lt 24793 ]; then
+        echo "Installing Java 17"
+        yum install java-17-openjdk -y > /dev/null 2>&1
+    else
+        echo "Installing Java 21"
+        yum install java-21-openjdk -y > /dev/null 2>&1
+    fi
+}
+
+installCM() {
+    echo "Updating packages"
     yum update -y > /dev/null 2>&1
 
-    # Check for daemonize dependency and install. 
-    if [ $(($CBCI_OC_VERSION_SHORT)) -lt 2426 ]; then
-        echo "daemonize needed. Installing it now"
+    version_numeric=$(parse_version_number "$CBCI_CM_VERSION")
+    if [ "$version_numeric" -lt 24260 ]; then
+        echo "Installing daemonize (required for older versions)"
         yum install epel-release -y > /dev/null 2>&1
         yum install daemonize -y > /dev/null 2>&1
     fi
 
-    if [ $(($CBCI_OC_VERSION_SHORT)) -lt 2332 ]; then
-        # Detected a CI version below 2.332.1.4, Will install Java 8
-        echo "Detected a CI version below 2.332.1.4, Will install Java 8"
-        yum install java-1.8.0-openjdk-devel -y > /dev/null 2>&1
-    else
-        # Detected a CI version 2.332.1.4 or higher. Installing Java 11
-        echo "Detected a CI version 2.332.1.4 or higher. Installing Java 11"
-        yum install java-11-openjdk -y > /dev/null 2>&1
-    fi
+    install_java_by_version
 
     echo "Installing wget"
     yum install wget -y > /dev/null 2>&1
 
-    echo "Downloading Cloudbees CI package"
-    wget -c https://downloads.cloudbees.com/cloudbees-core/traditional/operations-center/rolling/rpm/RPMS/noarch/cloudbees-core-oc-$CBCI_OC_VERSION.noarch.rpm > /dev/null 2>&1
+    echo "Downloading CloudBees CI controller package: $CBCI_CM_VERSION"
+    wget -c https://downloads.cloudbees.com/cloudbees-core/traditional/controller/rolling/rpm/RPMS/noarch/cloudbees-core-cm-$CBCI_CM_VERSION.noarch.rpm > /dev/null 2>&1
 
-    echo "Installing Cloudbees CI OC package"
-    rpm -ivh cloudbees-core-oc-$CBCI_OC_VERSION.noarch.rpm > /dev/null 2>&1
+    echo "Installing CloudBees CI controller package"
+    rpm -ivh cloudbees-core-cm-$CBCI_CM_VERSION.noarch.rpm > /dev/null 2>&1
 
-    echo "Starting Cloudbees CI OC"
-    systemctl enable cloudbees-core-oc > /dev/null 2>&1
-    systemctl start cloudbees-core-oc > /dev/null 2>&1
+    echo "Starting CloudBees CI controller service"
+    systemctl enable cloudbees-core-cm > /dev/null 2>&1
+    systemctl start cloudbees-core-cm > /dev/null 2>&1
+
     echo "Installation complete"
 }
 
+# Parse options
 while getopts ":h" opt; do
     case "$opt" in
-        h) 
-            show_help
-            ;;
-        \?) 
-            echo "Invalid option: -$OPTARG" >&2
-            ;;
+        h) show_help; exit 0 ;;
+        \?) echo "Invalid option: -$OPTARG" >&2; exit 1 ;;
     esac
 done
 
-# Directory where script is run from
-HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# --- EC2 Metadata Detection and Version Assignment ---
+metadata_output=$(curl -IL http://169.254.169.254/ 2>/dev/null)
 
-# Set default version if environment variable not set
-CBCI_OC_VERSION=${CBCI_OC_VERSION_ENV:-'2.375.4.2-1.1'}
-echo $CBCI_OC_VERSION
-
-# Check for EC2 instance metadata service version
-# Check if the output contains the word "Unauthorized" this is IMDSv2.
-output=$(curl -IL  http://169.254.169.254/) 
-
-if [[ $output == *"Unauthorized"* ]]; then
-    # Check for IMDv2
-    echo "EC2 IMDv2 detected. Will get instance version from EC2 tags with token"
-    TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-    CBCI_OC_VERSION=$(curl http://169.254.169.254/latest/meta-data/tags/instance/CB_VERSION -H "X-aws-ec2-metadata-token: $TOKEN")"-1.1"
-
-elif [[ $output == *"200 OK"* ]]; then
-    # Check IMDv1
-    echo "TEC2 IMDv1 detected. Will get instance version from EC2 tags without a token."
-    CBCI_OC_VERSION=$(curl http://169.254.169.254/latest/meta-data/tags/instance/CB_VERSION)"-1.1"
-
-elif [[ $output == *"Failed connect"* ]]; then
-    # Check if Server is not EC2
-    echo "EC2 not detected, starting installation"
-    installOC
+if [[ $metadata_output == *"401 Unauthorized"* ]]; then
+    echo "EC2 IMDSv2 detected"
+    TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" \
+        -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null)
+    TAG_VALUE=$(curl -s http://169.254.169.254/latest/meta-data/tags/instance/CB_VERSION \
+        -H "X-aws-ec2-metadata-token: $TOKEN")
+    if [ -n "$TAG_VALUE" ]; then
+        CBCI_CM_VERSION="$TAG_VALUE-1.1"
+    fi
+elif [[ $metadata_output == *"200 OK"* ]]; then
+    echo "EC2 IMDSv1 detected"
+    TAG_VALUE=$(curl -s http://169.254.169.254/latest/meta-data/tags/instance/CB_VERSION)
+    if [ -n "$TAG_VALUE" ]; then
+        CBCI_CM_VERSION="$TAG_VALUE-1.1"
+    fi
 else
-    # Catch all
-    echo "EC2 not detected, starting installation"
-    installOC
+    echo "EC2 metadata not detected"
 fi
 
-exit 0
+# --- Final fallback if nothing set yet ---
+CBCI_CM_VERSION="${CBCI_CM_VERSION:-${CBCI_CM_VERSION_ENV:-'2.375.4.2-1.1'}}"
+echo "Using CloudBees CI version: $CBCI_CM_VERSION"
 
-# TODO
-# Get instance metadata 
-# Get token for IMDV2:- TOKEN=`curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600"`
-# Get specific tag:- VERS=$(curl http://169.254.169.254/latest/meta-data/tags/instance/CB_VERSION -H "X-aws-ec2-metadata-token: $TOKEN")
+# Begin install
+installCM
+exit 0
